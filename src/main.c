@@ -15,11 +15,11 @@ GNU General Public License for more details.                            \n\
 You should have received a copy of the GNU General Public License       \n\
 along with this program.  If not, see <https://www.gnu.org/licenses/>."
 
-#include <stdlib.h> // exit, EXIT_FAILURE, EXIT_SUCCESS
-#include <unistd.h> // getopt
-#include <stdint.h> // uint8_t
-#include <stdbool.h> // bool,
-#include <stdio.h> // printf, puts
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <unistd.h>
 #include <ncurses.h>
 
 #define MSG_USAGE "Usage: %s [-hl] [file]\n" // Must have \n
@@ -27,7 +27,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>."
 #define MSG_COULD_NOT_OPEN "Could not open file" // Do not add punctuation; `perror` adds a colon
 #define MSG_COULD_NOT_READ "Could not read file."
 #define MSG_COULD_NOT_CLOSE "Could not close file."
-#define MSG_INVALID_GIF "Invalid GIF file (invalid data at position %lx).\n"
+#define MSG_INVALID_GIF "Invalid GIF file (invalid data at position %lx).\n" // Must have \n
+
+// Format: position, size
+// Big-endian positions; higher positions = higher place values
+#define FLAG_GCT 7
+#define FLAG_BIT_DEPTH 6
+#define FLAG_SORTED 3
+#define FLAG_GCT_SIZE 2
 
 #define BYTE(n) (fileContents[n])
 
@@ -40,10 +47,17 @@ long fileLen;
 long currPos = 0;
 char* fileContents;
 
-uint16_t scrWidth, scrHeight;
-uint8_t flags, bkgdColor, range;
+uint16_t version, scrWidth, scrHeight;
+uint8_t flags, bkgdColor, pixelAspectRatio, bitDepth, gctSize;
+bool gctExists, isSorted;
 
 ////////////////////////////////////////////////////////////////////////////////
+
+uint8_t
+getFlag(const int pos, const int numBits)
+{
+    return (flags >> pos) % (1U << numBits);
+}
 
 void
 invalidGif(void)
@@ -169,20 +183,26 @@ main(const int argc, char** argv)
     /* TODO Validate and parse the file
     */
 
-    // Header - "GIF89a"
+    // Header - "GIF"
     expect('G');
     expect('I');
     expect('F');
-    expect('8');
-    expect('9');
-    expect('a');
 
-    // Dimensions 
+    // Version - "87a", "89a"
+    expect('8');
+    version = get16();
+
+    // Logical Screen Descriptor
     scrWidth = get16();
     scrHeight = get16();
     flags = get8();
     bkgdColor = get8();
-    range = get8();
+    pixelAspectRatio = get8();
+
+    gctExists = getFlag(FLAG_GCT, 1);
+    bitDepth = getFlag(FLAG_BIT_DEPTH, 3);
+    isSorted = getFlag(FLAG_SORTED, 1);
+    gctSize = getFlag(FLAG_GCT_SIZE, 3);
 
 exit(EXIT_SUCCESS); // debug; skips ncurses
     ////////////////////////////////////////////////////////////////////////////
