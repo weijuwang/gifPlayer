@@ -1,4 +1,4 @@
-const char* LICENSE_NOTICE = "\
+#define LICENSE_NOTICE "\
 gifPlayer: A terminal-based video player for GIF files.                 \n\
 Copyright (C) 2022 Weiju Wang.                                          \n\
                                                                         \n\
@@ -13,28 +13,82 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           \n\
 GNU General Public License for more details.                            \n\
                                                                         \n\
 You should have received a copy of the GNU General Public License       \n\
-along with this program.  If not, see <https://www.gnu.org/licenses/>.";
+along with this program.  If not, see <https://www.gnu.org/licenses/>."
 
 #include <stdlib.h> // exit, EXIT_FAILURE, EXIT_SUCCESS
 #include <unistd.h> // getopt
-
+#include <stdint.h> // uint8_t
+#include <stdbool.h> // bool,
 #include <stdio.h> // printf, puts
 #include <ncurses.h>
 
-#define MSG_USAGE "Usage: %s [-hl] [file]\n" // Must have \n because this is passed to `printf`, not `puts` like the others
+#define MSG_USAGE "Usage: %s [-hl] [file]\n" // Must have \n
 #define MSG_NOFILE "Nothing to play."
 #define MSG_COULD_NOT_OPEN "Could not open file" // Do not add punctuation; `perror` adds a colon
 #define MSG_COULD_NOT_READ "Could not read file."
 #define MSG_COULD_NOT_CLOSE "Could not close file."
+#define MSG_INVALID_GIF "Invalid GIF file (invalid data at position %lx).\n"
+
+#define BYTE(n) (fileContents[n])
+
+////////////////////////////////////////////////////////////////////////////////
+
+int currFlag;
+FILE* filePtr;
+
+long fileLen;
+long currPos = 0;
+char* fileContents;
+
+uint16_t scrWidth, scrHeight;
+uint8_t flags, bkgdColor, range;
+
+////////////////////////////////////////////////////////////////////////////////
+
+void
+invalidGif(void)
+{
+    printf(MSG_INVALID_GIF, currPos);
+    exit(EXIT_FAILURE);
+}
+
+void
+expect(const uint8_t val)
+{
+    if(fileContents[currPos] != val)
+    {
+        invalidGif();
+    }
+    else ++currPos;
+}
+
+uint8_t
+get8(void)
+{
+    uint8_t temp = fileContents[currPos];
+    ++currPos;
+    return temp;
+}
+
+uint16_t
+get16(void)
+{
+    uint16_t temp = *(uint16_t*)(fileContents + currPos);
+    currPos += 2;
+    return temp;
+}
+
+void
+teardown(void)
+{
+    free(fileContents);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 int
 main(const int argc, char** argv)
 {
-    int currFlag;
-    FILE* filePtr;
-    long fileLen;
-    char* fileContents;
-
     ////////////////////////////////////////////////////////////////////////////
     /* Parse command-line options.
     */
@@ -47,13 +101,13 @@ main(const int argc, char** argv)
             // Display license
             case 'l':
                 puts(LICENSE_NOTICE);
-                return EXIT_FAILURE;
+                exit(EXIT_FAILURE);
 
             // Display help
             case 'h':
             default:
                 printf(MSG_USAGE, argv[0]);
-                return EXIT_FAILURE;
+                exit(EXIT_FAILURE);
         }
     }
 
@@ -65,7 +119,7 @@ main(const int argc, char** argv)
     if(optind >= argc)
     {
         puts(MSG_NOFILE);
-        return EXIT_FAILURE;
+        exit(EXIT_FAILURE);
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -81,7 +135,7 @@ main(const int argc, char** argv)
     if(filePtr == NULL)
     {
         perror(MSG_COULD_NOT_OPEN);
-        return EXIT_FAILURE;
+        exit(EXIT_FAILURE);
     }
 
     // Find file length
@@ -91,23 +145,46 @@ main(const int argc, char** argv)
 
     // Read the file's contents into memory
     fileContents = malloc(fileLen);
+    fread(fileContents, sizeof(uint8_t), fileLen, filePtr);
 
     // Could we NOT read the file?
     if(fileContents == NULL)
     {
         puts(MSG_COULD_NOT_READ);
-        return EXIT_FAILURE;
+        exit(EXIT_FAILURE);
     }
+
+    atexit(teardown);
 
     // Try closing the file, since its contents are now in memory. If it doesn't close...
     if(fclose(filePtr) == EOF)
     {
         puts(MSG_COULD_NOT_CLOSE);
-        return EXIT_FAILURE;
+        exit(EXIT_FAILURE);
     }
 
     // The file is now read into memory and closed.
 
+    ////////////////////////////////////////////////////////////////////////////
+    /* TODO Validate and parse the file
+    */
+
+    // Header - "GIF89a"
+    expect('G');
+    expect('I');
+    expect('F');
+    expect('8');
+    expect('9');
+    expect('a');
+
+    // Dimensions 
+    scrWidth = get16();
+    scrHeight = get16();
+    flags = get8();
+    bkgdColor = get8();
+    range = get8();
+
+exit(EXIT_SUCCESS); // debug; skips ncurses
     ////////////////////////////////////////////////////////////////////////////
     /* Init ncurses
     FROM THIS POINT ON, DO NOT USE STANDARD TERMINAL IO.
@@ -115,16 +192,17 @@ main(const int argc, char** argv)
 
     initscr(); // Start the screen
     noecho(); // Do not echo user input back to the screen
+    clear();
 
     ////////////////////////////////////////////////////////////////////////////
-
-    // TODO Actually play the video
+    /* TODO Play the video
+    */
 
     ////////////////////////////////////////////////////////////////////////////
     /* Teardown
+    `teardown()`, defined earlier, is called automatically by `exit()`.
     */
 
     endwin(); // done with ncurses, back to normal terminal
-    free(fileContents);
-    return EXIT_SUCCESS;
+    exit(EXIT_SUCCESS);
 }
