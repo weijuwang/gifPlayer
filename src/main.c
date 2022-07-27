@@ -39,16 +39,19 @@ References:
 #define MSG_INVALID_GIF "Could not play file (invalid data at position %lx).\n" // Must have \n
 #define MSG_NO_COLORS "This terminal does not support colors."
 
-// Format: position, size
+// Format: position (of the rightmost bit), size
 // Big-endian positions; higher positions = higher place values
 #define FLAG_GCT 7
-#define FLAG_BIT_DEPTH 6
+#define FLAG_BIT_DEPTH 4
 #define FLAG_SORTED 3
-#define FLAG_GCT_SIZE 2
+#define FLAG_GCT_SIZE 0
 
 #define BYTE(n) (fileContents[n])
 
 ////////////////////////////////////////////////////////////////////////////////
+
+#define BW_RAMP_LEN 70
+const char bwPixels[BW_RAMP_LEN] = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
 
 bool ncursesStarted = false, playColor = true;
 
@@ -59,9 +62,8 @@ long fileLen;
 long currPos = 0;
 char* fileContents = NULL;
 
-uint16_t version, scrWidth, scrHeight;
-uint8_t flags, bkgdColorIndex, pixelAspectRatio, bitDepth, gctSize;
-bool gctExists, isSorted;
+int version, scrWidth, scrHeight, flags, bkgdColorIndex, pixelAspectRatio, bitDepth;
+bool isSorted;
 uint8_t* colorTable = NULL;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -123,20 +125,27 @@ teardown(void)
 void
 compileColorTable(const size_t ctSize)
 {
-    uint8_t colors[8];
+    uint_fast8_t r, g, b;
 
-    colorTable = realloc(colorTable, ctSize * 3);
+    colorTable = realloc(colorTable, ctSize * sizeof(uint8_t));
 
-    // For each color in the Global Color Table...
+    // For each color in the color table...
     for(int i = 0; i < ctSize; ++i)
     {
+        r = fileContents[currPos + 3*i];
+        g = fileContents[currPos + 3*i + 1];
+        b = fileContents[currPos + 3*i + 2];
+
         // Colored mode
         if(playColor)
         {
+            //TODO compileColorTable(), colored mode
         }
         // Black-and-white mode
         else
         {
+            float colorPos = BW_RAMP_LEN * (r * 0.299 + g * 0.587 + b * 0.114) / 256;
+            colorTable[i] = bwPixels[(int)colorPos];
         }
     }
 }
@@ -247,15 +256,16 @@ main(const int argc, char** argv)
     bkgdColorIndex = get8();
     pixelAspectRatio = get8();
 
-    gctExists = getFlag(FLAG_GCT, 1);
-    bitDepth = getFlag(FLAG_BIT_DEPTH, 3);
+    bitDepth = getFlag(FLAG_BIT_DEPTH, 3) + 1;
     isSorted = getFlag(FLAG_SORTED, 1);
-    gctSize = (1U << (getFlag(FLAG_GCT_SIZE, 3) + 1));
 
-    if(gctExists)
+    // Compile the GCT if it exists
+    if(getFlag(FLAG_GCT, 1))
     {
-        compileColorTable(gctSize);
+        compileColorTable((1U << (getFlag(FLAG_GCT_SIZE, 3) + 1)));
     }
+
+
 
 exit(EXIT_SUCCESS); // debug; skips ncurses
     ////////////////////////////////////////////////////////////////////////////
@@ -268,7 +278,7 @@ exit(EXIT_SUCCESS); // debug; skips ncurses
     ncursesStarted = true;
 
     // If we're playing in color, the terminal must be able to support colors
-    if(playColor && !has_colors())
+    if(playColor)
     {
         if(!has_colors())
         {
