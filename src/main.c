@@ -15,6 +15,12 @@ GNU General Public License for more details.                            \n\
 You should have received a copy of the GNU General Public License       \n\
 along with this program.  If not, see <https://www.gnu.org/licenses/>."
 
+/*
+References:
+- https://en.wikipedia.org/wiki/GIF
+- https://www.w3.org/Graphics/GIF/spec-gif89a.txt
+*/
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -30,7 +36,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>."
 #define MSG_COULD_NOT_OPEN "Could not open file" // Do not add punctuation; `perror` adds a colon
 #define MSG_COULD_NOT_READ "Could not read file."
 #define MSG_COULD_NOT_CLOSE "Could not close file."
-#define MSG_INVALID_GIF "Invalid GIF file (invalid data at position %lx).\n" // Must have \n
+#define MSG_INVALID_GIF "Could not play file (invalid data at position %lx).\n" // Must have \n
 #define MSG_NO_COLORS "This terminal does not support colors."
 
 // Format: position, size
@@ -51,11 +57,12 @@ FILE* filePtr;
 
 long fileLen;
 long currPos = 0;
-char* fileContents;
+char* fileContents = NULL;
 
 uint16_t version, scrWidth, scrHeight;
-uint8_t flags, bkgdColor, pixelAspectRatio, bitDepth, gctSize;
+uint8_t flags, bkgdColorIndex, pixelAspectRatio, bitDepth, gctSize;
 bool gctExists, isSorted;
+uint8_t* colorTable = NULL;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -101,11 +108,36 @@ get16(void)
 void
 teardown(void)
 {
-    free(fileContents);
+    if(fileContents != NULL)
+        free(fileContents);
+
+    if(colorTable != NULL)
+        free(colorTable);
 
     if(ncursesStarted)
     {
         endwin(); // done with ncurses, back to normal terminal
+    }
+}
+
+void
+compileColorTable(const size_t ctSize)
+{
+    uint8_t colors[8];
+
+    colorTable = realloc(colorTable, ctSize * 3);
+
+    // For each color in the Global Color Table...
+    for(int i = 0; i < ctSize; ++i)
+    {
+        // Colored mode
+        if(playColor)
+        {
+        }
+        // Black-and-white mode
+        else
+        {
+        }
     }
 }
 
@@ -114,6 +146,8 @@ teardown(void)
 int
 main(const int argc, char** argv)
 {
+    atexit(teardown);
+
     ////////////////////////////////////////////////////////////////////////////
     /* Parse command-line options.
     */
@@ -184,8 +218,6 @@ main(const int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-    atexit(teardown);
-
     // Try closing the file, since its contents are now in memory. If it doesn't close...
     if(fclose(filePtr) == EOF)
     {
@@ -212,13 +244,18 @@ main(const int argc, char** argv)
     scrWidth = get16();
     scrHeight = get16();
     flags = get8();
-    bkgdColor = get8();
+    bkgdColorIndex = get8();
     pixelAspectRatio = get8();
 
     gctExists = getFlag(FLAG_GCT, 1);
     bitDepth = getFlag(FLAG_BIT_DEPTH, 3);
     isSorted = getFlag(FLAG_SORTED, 1);
-    gctSize = getFlag(FLAG_GCT_SIZE, 3);
+    gctSize = (1U << (getFlag(FLAG_GCT_SIZE, 3) + 1));
+
+    if(gctExists)
+    {
+        compileColorTable(gctSize);
+    }
 
 exit(EXIT_SUCCESS); // debug; skips ncurses
     ////////////////////////////////////////////////////////////////////////////
@@ -233,13 +270,17 @@ exit(EXIT_SUCCESS); // debug; skips ncurses
     // If we're playing in color, the terminal must be able to support colors
     if(playColor && !has_colors())
     {
-        puts(MSG_NO_COLORS);
-        exit(EXIT_FAILURE);
+        if(!has_colors())
+        {
+            puts(MSG_NO_COLORS);
+            exit(EXIT_FAILURE);
+        }
+
+        start_color();
     }
 
     noecho(); // Do not echo user input back to the screen
     clear();
-    start_color();
 
     ////////////////////////////////////////////////////////////////////////////
     /* TODO Play the video
