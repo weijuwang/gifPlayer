@@ -22,12 +22,16 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>."
 #include <unistd.h>
 #include <ncurses.h>
 
-#define MSG_USAGE "Usage: %s [-hl] [file]\n" // Must have \n
+#define MSG_USAGE "Usage: %s [-hlb] [file]\n" \
+                  "-h: Display this help message.\n" \
+                  "-l: Display the license notice.\n" \
+                  "-b: Play in black-and-white.\n"
 #define MSG_NOFILE "Nothing to play."
 #define MSG_COULD_NOT_OPEN "Could not open file" // Do not add punctuation; `perror` adds a colon
 #define MSG_COULD_NOT_READ "Could not read file."
 #define MSG_COULD_NOT_CLOSE "Could not close file."
 #define MSG_INVALID_GIF "Invalid GIF file (invalid data at position %lx).\n" // Must have \n
+#define MSG_NO_COLORS "This terminal does not support colors."
 
 // Format: position, size
 // Big-endian positions; higher positions = higher place values
@@ -39,6 +43,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>."
 #define BYTE(n) (fileContents[n])
 
 ////////////////////////////////////////////////////////////////////////////////
+
+bool ncursesStarted = false, playColor = true;
 
 int currFlag;
 FILE* filePtr;
@@ -96,6 +102,11 @@ void
 teardown(void)
 {
     free(fileContents);
+
+    if(ncursesStarted)
+    {
+        endwin(); // done with ncurses, back to normal terminal
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -108,10 +119,15 @@ main(const int argc, char** argv)
     */
 
     // For each flag passed...
-    while((currFlag = getopt(argc, argv, "hl")) != -1)
+    while((currFlag = getopt(argc, argv, "hlb")) != -1)
     {
         switch(currFlag)
         {
+            // Black-and-white mode
+            case 'b':
+                playColor = false;
+                break;
+
             // Display license
             case 'l':
                 puts(LICENSE_NOTICE);
@@ -210,19 +226,29 @@ exit(EXIT_SUCCESS); // debug; skips ncurses
     FROM THIS POINT ON, DO NOT USE STANDARD TERMINAL IO.
     */
 
-    initscr(); // Start the screen
+    // Start the screen
+    initscr();
+    ncursesStarted = true;
+
+    // If we're playing in color, the terminal must be able to support colors
+    if(playColor && !has_colors())
+    {
+        puts(MSG_NO_COLORS);
+        exit(EXIT_FAILURE);
+    }
+
     noecho(); // Do not echo user input back to the screen
     clear();
+    start_color();
 
     ////////////////////////////////////////////////////////////////////////////
     /* TODO Play the video
     */
 
     ////////////////////////////////////////////////////////////////////////////
-    /* Teardown
-    `teardown()`, defined earlier, is called automatically by `exit()`.
+    /* Exit
+    See `teardown()`, defined earlier, which is called automatically by `exit()`.
     */
 
-    endwin(); // done with ncurses, back to normal terminal
     exit(EXIT_SUCCESS);
 }
