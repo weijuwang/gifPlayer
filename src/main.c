@@ -41,10 +41,12 @@ References:
 
 // Format: position (of the rightmost bit), size
 // Big-endian positions; higher positions = higher place values
-#define FLAG_GCT 7
+#define FLAG_CT 7
 #define FLAG_BIT_DEPTH 4
-#define FLAG_SORTED 3
-#define FLAG_GCT_SIZE 0
+#define FLAG_GCT_SORTED 3
+#define FLAG_CT_SIZE 0
+#define FLAG_INTERLACE 6
+#define FLAG_LCT_SORTED 5
 
 #define BYTE(n) (fileContents[n])
 
@@ -62,27 +64,24 @@ long fileLen;
 long currPos = 0;
 char* fileContents = NULL;
 
-int version, scrWidth, scrHeight, flags, bkgdColorIndex, pixelAspectRatio, bitDepth;
-bool isSorted;
+int version, scrWidth, scrHeight, flags, bkgdColorIndex, pixelAspectRatio, bitDepth, imgLeft, imgTop, imgWidth, imgHeight;
+bool isSorted, isInterlaced;
 uint8_t* colorTable = NULL;
 
 ////////////////////////////////////////////////////////////////////////////////
 
-uint8_t
-getFlag(const int pos, const int numBits)
+int getFlag(const size_t pos, const size_t numBits)
 {
     return (flags >> pos) % (1U << numBits);
 }
 
-void
-invalidGif(void)
+void invalidGif(void)
 {
     printf(MSG_INVALID_GIF, currPos);
     exit(EXIT_FAILURE);
 }
 
-void
-expect(const uint8_t val)
+void expect(const uint_fast8_t val)
 {
     if(fileContents[currPos] != val)
     {
@@ -91,24 +90,21 @@ expect(const uint8_t val)
     else ++currPos;
 }
 
-uint8_t
-get8(void)
+uint_fast8_t get8(void)
 {
-    uint8_t temp = fileContents[currPos];
+    uint_fast8_t temp = fileContents[currPos];
     ++currPos;
     return temp;
 }
 
-uint16_t
-get16(void)
+uint_fast16_t get16(void)
 {
-    uint16_t temp = *(uint16_t*)(fileContents + currPos);
+    uint_fast16_t temp = *(uint16_t*)(fileContents + currPos);
     currPos += 2;
     return temp;
 }
 
-void
-teardown(void)
+void teardown(void)
 {
     if(fileContents != NULL)
         free(fileContents);
@@ -122,38 +118,40 @@ teardown(void)
     }
 }
 
-void
-compileColorTable(const size_t ctSize)
+void compileColorTableIfExists(void)
 {
-    uint_fast8_t r, g, b;
-
-    colorTable = realloc(colorTable, ctSize * sizeof(uint8_t));
-
-    // For each color in the color table...
-    for(int i = 0; i < ctSize; ++i)
+    if(getFlag(FLAG_CT, 1))
     {
-        r = fileContents[currPos + 3*i];
-        g = fileContents[currPos + 3*i + 1];
-        b = fileContents[currPos + 3*i + 2];
+        size_t ctSize = (1U << (getFlag(FLAG_CT_SIZE, 3) + 1));
+        uint_fast8_t r, g, b;
 
-        // Colored mode
-        if(playColor)
+        colorTable = realloc(colorTable, ctSize * sizeof(uint8_t));
+
+        // For each color in the color table...
+        for(int i = 0; i < ctSize; ++i)
         {
-            //TODO compileColorTable(), colored mode
-        }
-        // Black-and-white mode
-        else
-        {
-            float colorPos = BW_RAMP_LEN * (r * 0.299 + g * 0.587 + b * 0.114) / 256;
-            colorTable[i] = bwPixels[(int)colorPos];
+            r = fileContents[currPos + 3*i];
+            g = fileContents[currPos + 3*i + 1];
+            b = fileContents[currPos + 3*i + 2];
+
+            // Colored mode
+            if(playColor)
+            {
+                //TODO compileColorTable(), colored mode
+            }
+            // Black-and-white mode
+            else
+            {
+                float colorPos = BW_RAMP_LEN * (r * 0.299 + g * 0.587 + b * 0.114) / 256;
+                colorTable[i] = bwPixels[(int)colorPos];
+            }
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-int
-main(const int argc, char** argv)
+int main(const int argc, char** argv)
 {
     atexit(teardown);
 
@@ -237,7 +235,7 @@ main(const int argc, char** argv)
     // The file is now read into memory and closed.
 
     ////////////////////////////////////////////////////////////////////////////
-    /* TODO Validate and parse the file
+    /* Validate and parse the file
     */
 
     // Header - "GIF"
@@ -254,18 +252,39 @@ main(const int argc, char** argv)
     scrHeight = get16();
     flags = get8();
     bkgdColorIndex = get8();
-    pixelAspectRatio = get8();
-
+    pixelAspectRatio = (get8() + 15) / 64;
     bitDepth = getFlag(FLAG_BIT_DEPTH, 3) + 1;
-    isSorted = getFlag(FLAG_SORTED, 1);
+    isSorted = getFlag(FLAG_GCT_SORTED, 1);
 
-    // Compile the GCT if it exists
-    if(getFlag(FLAG_GCT, 1))
+    compileColorTableIfExists();
+
+    while(true)
     {
-        compileColorTable((1U << (getFlag(FLAG_GCT_SIZE, 3) + 1)));
+        switch(get8())
+        {
+            // Image separator (0x2c)
+            case ',':
+                imgLeft = get16();
+                imgTop = get16();
+                imgWidth = get16();
+                imgHeight = get16();
+                flags = get8();
+                isInterlaced = getFlag(FLAG_INTERLACE, 1);
+                isSorted = getFlag(FLAG_LCT_SORTED, 1);
+
+                compileColorTableIfExists();
+
+                break;
+
+            // Extension
+            case '!':
+                break;
+
+            // End of file
+            case ';':
+                break;
+        }
     }
-
-
 
 exit(EXIT_SUCCESS); // debug; skips ncurses
     ////////////////////////////////////////////////////////////////////////////
