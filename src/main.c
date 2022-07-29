@@ -28,10 +28,11 @@ References:
 #include <unistd.h>
 #include <ncurses.h>
 
+// Messages displayed to the user
 #define MSG_USAGE "Usage: %s [-hlb] [file]\n" \
-                  "-h: Display this help message.\n" \
-                  "-l: Display the license notice.\n" \
-                  "-b: Play in black-and-white.\n"
+    "-h: Display this help message.\n" \
+    "-l: Display the license notice.\n" \
+    "-b: Play in black-and-white.\n"
 #define MSG_NOFILE "Nothing to play."
 #define MSG_COULD_NOT_OPEN "Could not open file" // Do not add punctuation; `perror` adds a colon
 #define MSG_COULD_NOT_READ "Could not read file."
@@ -48,25 +49,74 @@ References:
 #define FLAG_INTERLACE 6
 #define FLAG_LCT_SORTED 5
 
+#define FLAG_DISPOSAL_METHOD 2
+#define FLAG_USER_INPUT 1
+#define FLAG_TRANSPARENT 0
+
+#define GCE_BLOCK_SIZE 4
+
 #define BYTE(n) (fileContents[n])
+#define FREE_IF_ALLOCATED(p) \
+    if((p) != NULL) \
+        free(p);
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#define BW_RAMP_LEN 70
-const char bwPixels[BW_RAMP_LEN] = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+struct buffer
+{
+    uint8_t* data;
+    size_t size;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
+const char asciiLuminance[] = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+
+struct
+{
+    uint_fast16_t width;
+    uint_fast16_t height;
+    uint_fast8_t bkgdColorIndex;
+    uint_fast8_t pixelAspectRatio;
+    size_t bitDepth;
+    bool isSorted;
+} lsd;
+
+struct
+{
+    uint_fast16_t left;
+    uint_fast16_t top;
+    uint_fast16_t width;
+    uint_fast16_t height;
+    bool isSorted;
+    bool interlaced;
+    size_t lzwMinCodeSz;
+} img;
+
+struct
+{
+    enum
+    {
+        noAction = 0,
+        doNotDispose = 1,
+        restoreBkgd = 2,
+        restorePrevious = 3
+    } disposalMethod;
+
+    bool expectingUserInput;
+    bool hasTransparencyIndex;
+    uint_fast16_t delayTime;
+    uint_fast8_t transparentColorIndex;
+} gce;
+
+struct buffer gct, lct;
+int flags;
+
+struct buffer file;
+FILE* filePtr = NULL;
+size_t currPos = 0;
 
 bool ncursesStarted = false, playColor = true;
-
-int currFlag;
-FILE* filePtr;
-
-long fileLen;
-long currPos = 0;
-char* fileContents = NULL;
-
-int version, scrWidth, scrHeight, flags, bkgdColorIndex, pixelAspectRatio, bitDepth, imgLeft, imgTop, imgWidth, imgHeight;
-bool isSorted, isInterlaced;
-uint8_t* colorTable = NULL;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -83,7 +133,7 @@ void invalidGif(void)
 
 void expect(const uint_fast8_t val)
 {
-    if(fileContents[currPos] != val)
+    if(file.data[currPos] != val)
     {
         invalidGif();
     }
@@ -92,61 +142,67 @@ void expect(const uint_fast8_t val)
 
 uint_fast8_t get8(void)
 {
-    uint_fast8_t temp = fileContents[currPos];
+    uint_fast8_t temp = file.data[currPos];
     ++currPos;
     return temp;
 }
 
 uint_fast16_t get16(void)
 {
-    uint_fast16_t temp = *(uint16_t*)(fileContents + currPos);
+    uint_fast16_t temp = *(uint16_t*)(file.data + currPos);
     currPos += 2;
     return temp;
 }
 
 void teardown(void)
 {
-    if(fileContents != NULL)
-        free(fileContents);
-
-    if(colorTable != NULL)
-        free(colorTable);
+    FREE_IF_ALLOCATED(file.data);
+    FREE_IF_ALLOCATED(gct.data);
+    FREE_IF_ALLOCATED(lct.data);
 
     if(ncursesStarted)
-    {
         endwin(); // done with ncurses, back to normal terminal
-    }
 }
 
-void compileColorTableIfExists(void)
+uint8_t* compileColorTableIfExists(uint8_t* const previousColorTable)
 {
+    uint8_t* colorTable;
+
+    // Compile the color table if it exists
     if(getFlag(FLAG_CT, 1))
     {
+        // Size of color table
         size_t ctSize = (1U << (getFlag(FLAG_CT_SIZE, 3) + 1));
         uint_fast8_t r, g, b;
 
-        colorTable = realloc(colorTable, ctSize * sizeof(uint8_t));
+        // The color table is likely going to be resized; allocate new memory for it
+        colorTable = realloc(previousColorTable, ctSize * sizeof(uint8_t));
 
         // For each color in the color table...
         for(int i = 0; i < ctSize; ++i)
         {
-            r = fileContents[currPos + 3*i];
-            g = fileContents[currPos + 3*i + 1];
-            b = fileContents[currPos + 3*i + 2];
+            // Retrieve its RGB values
+            r = file.data[currPos + 3*i];
+            g = file.data[currPos + 3*i + 1];
+            b = file.data[currPos + 3*i + 2];
 
             // Colored mode
             if(playColor)
             {
-                //TODO compileColorTable(), colored mode
+                // TODO compileColorTableIfExists(), colored mode
             }
             // Black-and-white mode
             else
             {
-                float colorPos = BW_RAMP_LEN * (r * 0.299 + g * 0.587 + b * 0.114) / 256;
-                colorTable[i] = bwPixels[(int)colorPos];
+                // Compute the color's luminance and find the matching ASCII luminance character
+                float colorPos = (sizeof(asciiLuminance) - 1) * (r * 0.299 + g * 0.587 + b * 0.114) / 256;
+                colorTable[i] = asciiLuminance[(int)colorPos];
             }
         }
+
+        return colorTable;
     }
+    else return NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -158,6 +214,8 @@ int main(const int argc, char** argv)
     ////////////////////////////////////////////////////////////////////////////
     /* Parse command-line options.
     */
+
+    int currFlag;
 
     // For each flag passed...
     while((currFlag = getopt(argc, argv, "hlb")) != -1)
@@ -211,15 +269,15 @@ int main(const int argc, char** argv)
 
     // Find file length
     fseek(filePtr, 0L, SEEK_END); // Go one byte past the end of the file
-    fileLen = ftell(filePtr); // How many bytes from us to the beginning? (i.e. how long is the file)
+    file.size = ftell(filePtr); // How many bytes from us to the beginning? (i.e. how long is the file)
     rewind(filePtr); // Head back to the beginning
 
     // Read the file's contents into memory
-    fileContents = malloc(fileLen);
-    fread(fileContents, sizeof(uint8_t), fileLen, filePtr);
+    file.data = malloc(file.size * sizeof(uint8_t));
+    fread(file.data, sizeof(uint8_t), file.size, filePtr);
 
     // Could we NOT read the file?
-    if(fileContents == NULL)
+    if(file.data == NULL)
     {
         puts(MSG_COULD_NOT_READ);
         exit(EXIT_FAILURE);
@@ -234,59 +292,6 @@ int main(const int argc, char** argv)
 
     // The file is now read into memory and closed.
 
-    ////////////////////////////////////////////////////////////////////////////
-    /* Validate and parse the file
-    */
-
-    // Header - "GIF"
-    expect('G');
-    expect('I');
-    expect('F');
-
-    // Version - "87a", "89a"
-    expect('8');
-    version = get16();
-
-    // Logical Screen Descriptor
-    scrWidth = get16();
-    scrHeight = get16();
-    flags = get8();
-    bkgdColorIndex = get8();
-    pixelAspectRatio = (get8() + 15) / 64;
-    bitDepth = getFlag(FLAG_BIT_DEPTH, 3) + 1;
-    isSorted = getFlag(FLAG_GCT_SORTED, 1);
-
-    compileColorTableIfExists();
-
-    while(true)
-    {
-        switch(get8())
-        {
-            // Image separator (0x2c)
-            case ',':
-                imgLeft = get16();
-                imgTop = get16();
-                imgWidth = get16();
-                imgHeight = get16();
-                flags = get8();
-                isInterlaced = getFlag(FLAG_INTERLACE, 1);
-                isSorted = getFlag(FLAG_LCT_SORTED, 1);
-
-                compileColorTableIfExists();
-
-                break;
-
-            // Extension
-            case '!':
-                break;
-
-            // End of file
-            case ';':
-                break;
-        }
-    }
-
-exit(EXIT_SUCCESS); // debug; skips ncurses
     ////////////////////////////////////////////////////////////////////////////
     /* Init ncurses
     FROM THIS POINT ON, DO NOT USE STANDARD TERMINAL IO.
@@ -312,13 +317,110 @@ exit(EXIT_SUCCESS); // debug; skips ncurses
     clear();
 
     ////////////////////////////////////////////////////////////////////////////
-    /* TODO Play the video
+    /* Validate and parse the file
     */
 
-    ////////////////////////////////////////////////////////////////////////////
-    /* Exit
-    See `teardown()`, defined earlier, which is called automatically by `exit()`.
-    */
+    // Header - "GIF"
+    expect('G');
+    expect('I');
+    expect('F');
 
-    exit(EXIT_SUCCESS);
+    // Version - "89a"
+    expect('8');
+    expect('9');
+
+    // Logical Screen Descriptor
+    lsd.width = get16();
+    lsd.height = get16();
+
+    flags = get8();
+    lsd.bitDepth = getFlag(FLAG_BIT_DEPTH, 3) + 1;
+    lsd.isSorted = getFlag(FLAG_GCT_SORTED, 1);
+
+    lsd.bkgdColorIndex = get8();
+    lsd.pixelAspectRatio = (get8() + 15) / 64;
+
+    gct.data = compileColorTableIfExists(gct.data);
+
+    while(true)
+    {
+        switch(get8())
+        {
+            // Image separator (0x2c)
+            case ',':
+                img.left = get16();
+                img.top = get16();
+                img.width = get16();
+                img.height = get16();
+
+                flags = get8();
+                img.interlaced = getFlag(FLAG_INTERLACE, 1);
+                img.isSorted = getFlag(FLAG_LCT_SORTED, 1);
+
+                lct.data = compileColorTableIfExists(lct.data);
+
+                // TODO Parse image data
+
+                break;
+
+            // Extension introducer (0x21)
+            case '!':
+                switch(get8())
+                {
+                    // Graphics Control Extension
+                    case 0xf9:
+
+                        // GCE block size is always 4 bytes
+                        expect(GCE_BLOCK_SIZE);
+
+                        flags = get8();
+                        gce.disposalMethod = getFlag(FLAG_DISPOSAL_METHOD, 3);
+                        gce.expectingUserInput = getFlag(FLAG_USER_INPUT, 1);
+                        gce.hasTransparencyIndex = getFlag(FLAG_TRANSPARENT, 1);
+
+                        gce.delayTime = get16();
+                        gce.transparentColorIndex = get8();
+
+                        break;
+
+                    // TODO Comment Extension
+                    // This program does not read any data from Comment Extensions.
+                    case 0xfe:
+                        break;
+
+                    // TODO Plain Text Extension
+                    case 0x01:
+                        break;
+
+                    // TODO Application Extension
+                    case 0xff:
+                        break;
+
+                    default:
+                        break;
+                }
+
+                break;
+
+            // Trailer
+            case ';':
+                // We should be at the end of the file, since the trailer should be the last character
+                if(currPos == file.size)
+                {
+                    exit(EXIT_SUCCESS);
+                }
+                else
+                {
+                    // TODO Display error message if the trailer is misplaced
+                    exit(EXIT_FAILURE);
+                }
+
+                break;
+
+            // Unrecognized introducer
+            default:
+                exit(EXIT_FAILURE);
+                break;
+        }
+    }
 }
