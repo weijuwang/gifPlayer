@@ -110,7 +110,8 @@ struct
 } gce;
 
 struct buffer gct, lct;
-int flags;
+uint_fast8_t flags;
+uint_fast8_t cmtBlockSize;
 
 struct buffer file;
 FILE* filePtr = NULL;
@@ -383,9 +384,19 @@ int main(const int argc, char** argv)
 
                         break;
 
-                    // TODO Comment Extension
                     // This program does not read any data from Comment Extensions.
                     case 0xfe:
+
+                        while(true)
+                        {
+                            cmtBlockSize = get8();
+
+                            if(cmtBlockSize == 0)
+                                break;
+
+                            currPos += cmtBlockSize;
+                        }
+
                         break;
 
                     // TODO Plain Text Extension
