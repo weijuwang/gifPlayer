@@ -48,12 +48,15 @@ References:
 #define FLAG_CT_SIZE 0
 #define FLAG_INTERLACE 6
 #define FLAG_LCT_SORTED 5
-
 #define FLAG_DISPOSAL_METHOD 2
 #define FLAG_USER_INPUT 1
 #define FLAG_TRANSPARENT 0
 
+// Fixed values
 #define GCE_BLOCK_SIZE 4
+#define APP_EXT_BLOCK_SIZE 11
+#define TXT_EXT_BLOCK_SIZE 12
+#define BLOCK_TERMINATOR 0
 
 #define BYTE(n) (fileContents[n])
 #define FREE_IF_ALLOCATED(p) \
@@ -382,6 +385,7 @@ int main(const int argc, char** argv)
                         gce.delayTime = get16();
                         gce.transparentColorIndex = get8();
 
+                        expect(BLOCK_TERMINATOR);
                         break;
 
                     // This program does not read any data from Comment Extensions.
@@ -401,13 +405,20 @@ int main(const int argc, char** argv)
 
                     // TODO Plain Text Extension
                     case 0x01:
+                        expect(TXT_EXT_BLOCK_SIZE);
+
+                        expect(BLOCK_TERMINATOR);
                         break;
 
                     // TODO Application Extension
                     case 0xff:
+                        expect(APP_EXT_BLOCK_SIZE);
+
+                        expect(BLOCK_TERMINATOR);
                         break;
 
                     default:
+                        exit(EXIT_FAILURE);
                         break;
                 }
 
