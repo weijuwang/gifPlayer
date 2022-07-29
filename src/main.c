@@ -1,4 +1,4 @@
-#define LICENSE_NOTICE "\
+const char licenseNotice[] = "\
 gifPlayer: A terminal-based video player for GIF files.                 \n\
 Copyright (C) 2022 Weiju Wang.                                          \n\
                                                                         \n\
@@ -13,7 +13,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           \n\
 GNU General Public License for more details.                            \n\
                                                                         \n\
 You should have received a copy of the GNU General Public License       \n\
-along with this program.  If not, see <https://www.gnu.org/licenses/>."
+along with this program.  If not, see <https://www.gnu.org/licenses/>.";
 
 /*
 References:
@@ -27,18 +27,6 @@ References:
 #include <stdint.h>
 #include <unistd.h>
 #include <ncurses.h>
-
-// Messages displayed to the user
-#define MSG_USAGE "Usage: %s [-hlb] [file]\n" \
-    "-h: Display this help message.\n" \
-    "-l: Display the license notice.\n" \
-    "-b: Play in black-and-white.\n"
-#define MSG_NOFILE "Nothing to play."
-#define MSG_COULD_NOT_OPEN "Could not open file" // Do not add punctuation; `perror` adds a colon
-#define MSG_COULD_NOT_READ "Could not read file."
-#define MSG_COULD_NOT_CLOSE "Could not close file."
-#define MSG_INVALID_GIF "Could not play file (invalid data at position %lx).\n" // Must have \n
-#define MSG_NO_COLORS "This terminal does not support colors."
 
 // Format: position (of the rightmost bit), size
 // Big-endian positions; higher positions = higher place values
@@ -58,22 +46,12 @@ References:
 #define TXT_EXT_BLOCK_SIZE 12
 #define BLOCK_TERMINATOR 0
 
-#define BYTE(n) (fileContents[n])
-#define FREE_IF_ALLOCATED(p) \
-    if((p) != NULL) \
-        free(p);
-
-////////////////////////////////////////////////////////////////////////////////
-
 struct buffer
 {
     uint8_t* data;
     size_t size;
 };
 
-////////////////////////////////////////////////////////////////////////////////
-
-const char asciiLuminance[] = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
 
 struct
 {
@@ -122,7 +100,19 @@ size_t currPos = 0;
 
 bool ncursesStarted = false, playColor = true;
 
-////////////////////////////////////////////////////////////////////////////////
+const char msgUsage[] = "Usage: %s [-hlb] [file]\n" \
+    "-h: Display this help message.\n" \
+    "-l: Display the license notice.\n" \
+    "-b: Play in black-and-white.\n",
+msgNoFile[] = "Nothing to play.",
+msgCouldNotOpen[] = "Could not open file", // Do not add punctuation; `perror` adds a colon
+msgCouldNotRead[] = "Could not read file.",
+msgCouldNotClose[] = "Could not close file.",
+msgInvalidGif[] = "Could not play file (invalid data at position %lx).\n", // Must have \n
+msgNoColors[] = "This terminal does not support colors.";
+
+const char asciiLuminance[] = " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
+
 
 int getFlag(const size_t pos, const size_t numBits)
 {
@@ -131,7 +121,7 @@ int getFlag(const size_t pos, const size_t numBits)
 
 void invalidGif(void)
 {
-    printf(MSG_INVALID_GIF, currPos);
+    printf(msgInvalidGif, currPos);
     exit(EXIT_FAILURE);
 }
 
@@ -144,34 +134,38 @@ void expect(const uint_fast8_t val)
     else ++currPos;
 }
 
-uint_fast8_t get8(void)
+uint_fast8_t nextByte(void)
 {
     uint_fast8_t temp = file.data[currPos];
     ++currPos;
     return temp;
 }
 
-uint_fast16_t get16(void)
+uint_fast16_t nextShort(void)
 {
     uint_fast16_t temp = *(uint16_t*)(file.data + currPos);
-    currPos += 2;
+    currPos += sizeof(uint16_t);
     return temp;
+}
+
+void freeIfAllocated(uint8_t *const pointer)
+{
+    if(pointer != NULL)
+        free(pointer);
 }
 
 void teardown(void)
 {
-    FREE_IF_ALLOCATED(file.data);
-    FREE_IF_ALLOCATED(gct.data);
-    FREE_IF_ALLOCATED(lct.data);
+    freeIfAllocated(file.data);
+    freeIfAllocated(gct.data);
+    freeIfAllocated(lct.data);
 
     if(ncursesStarted)
         endwin(); // done with ncurses, back to normal terminal
 }
 
-uint8_t* compileColorTableIfExists(uint8_t* const previousColorTable)
+void compileColorTableIfExists(uint8_t* *const colorTable)
 {
-    uint8_t* colorTable;
-
     // Compile the color table if it exists
     if(getFlag(FLAG_CT, 1))
     {
@@ -180,7 +174,7 @@ uint8_t* compileColorTableIfExists(uint8_t* const previousColorTable)
         uint_fast8_t r, g, b;
 
         // The color table is likely going to be resized; allocate new memory for it
-        colorTable = realloc(previousColorTable, ctSize * sizeof(uint8_t));
+        *colorTable = realloc(*colorTable, ctSize * sizeof(uint8_t));
 
         // For each color in the color table...
         for(int i = 0; i < ctSize; ++i)
@@ -200,13 +194,10 @@ uint8_t* compileColorTableIfExists(uint8_t* const previousColorTable)
             {
                 // Compute the color's luminance and find the matching ASCII luminance character
                 float colorPos = (sizeof(asciiLuminance) - 1) * (r * 0.299 + g * 0.587 + b * 0.114) / 256;
-                colorTable[i] = asciiLuminance[(int)colorPos];
+                (*colorTable)[i] = asciiLuminance[(int)colorPos];
             }
         }
-
-        return colorTable;
     }
-    else return NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -233,13 +224,13 @@ int main(const int argc, char** argv)
 
             // Display license
             case 'l':
-                puts(LICENSE_NOTICE);
+                puts(licenseNotice);
                 exit(EXIT_FAILURE);
 
             // Display help
             case 'h':
             default:
-                printf(MSG_USAGE, argv[0]);
+                printf(msgUsage, argv[0]);
                 exit(EXIT_FAILURE);
         }
     }
@@ -251,7 +242,7 @@ int main(const int argc, char** argv)
     */
     if(optind >= argc)
     {
-        puts(MSG_NOFILE);
+        puts(msgNoFile);
         exit(EXIT_FAILURE);
     }
 
@@ -267,7 +258,7 @@ int main(const int argc, char** argv)
     // Could the file NOT be opened?
     if(filePtr == NULL)
     {
-        perror(MSG_COULD_NOT_OPEN);
+        perror(msgCouldNotOpen);
         exit(EXIT_FAILURE);
     }
 
@@ -283,14 +274,14 @@ int main(const int argc, char** argv)
     // Could we NOT read the file?
     if(file.data == NULL)
     {
-        puts(MSG_COULD_NOT_READ);
+        puts(msgCouldNotRead);
         exit(EXIT_FAILURE);
     }
 
     // Try closing the file, since its contents are now in memory. If it doesn't close...
     if(fclose(filePtr) == EOF)
     {
-        puts(MSG_COULD_NOT_CLOSE);
+        puts(msgCouldNotClose);
         exit(EXIT_FAILURE);
     }
 
@@ -310,7 +301,7 @@ int main(const int argc, char** argv)
     {
         if(!has_colors())
         {
-            puts(MSG_NO_COLORS);
+            puts(msgNoColors);
             exit(EXIT_FAILURE);
         }
 
@@ -334,34 +325,34 @@ int main(const int argc, char** argv)
     expect('9');
 
     // Logical Screen Descriptor
-    lsd.width = get16();
-    lsd.height = get16();
+    lsd.width = nextShort();
+    lsd.height = nextShort();
 
-    flags = get8();
+    flags = nextByte();
     lsd.bitDepth = getFlag(FLAG_BIT_DEPTH, 3) + 1;
     lsd.isSorted = getFlag(FLAG_GCT_SORTED, 1);
 
-    lsd.bkgdColorIndex = get8();
-    lsd.pixelAspectRatio = (get8() + 15) / 64;
+    lsd.bkgdColorIndex = nextByte();
+    lsd.pixelAspectRatio = (nextByte() + 15) / 64;
 
-    gct.data = compileColorTableIfExists(gct.data);
+    compileColorTableIfExists(&gct.data);
 
     while(true)
     {
-        switch(get8())
+        switch(nextByte())
         {
             // Image separator (0x2c)
             case ',':
-                img.left = get16();
-                img.top = get16();
-                img.width = get16();
-                img.height = get16();
+                img.left = nextShort();
+                img.top = nextShort();
+                img.width = nextShort();
+                img.height = nextShort();
 
-                flags = get8();
+                flags = nextByte();
                 img.interlaced = getFlag(FLAG_INTERLACE, 1);
                 img.isSorted = getFlag(FLAG_LCT_SORTED, 1);
 
-                lct.data = compileColorTableIfExists(lct.data);
+                compileColorTableIfExists(&lct.data);
 
                 // TODO Parse image data
 
@@ -369,7 +360,7 @@ int main(const int argc, char** argv)
 
             // Extension introducer (0x21)
             case '!':
-                switch(get8())
+                switch(nextByte())
                 {
                     // Graphics Control Extension
                     case 0xf9:
@@ -377,13 +368,13 @@ int main(const int argc, char** argv)
                         // GCE block size is always 4 bytes
                         expect(GCE_BLOCK_SIZE);
 
-                        flags = get8();
+                        flags = nextByte();
                         gce.disposalMethod = getFlag(FLAG_DISPOSAL_METHOD, 3);
                         gce.expectingUserInput = getFlag(FLAG_USER_INPUT, 1);
                         gce.hasTransparencyIndex = getFlag(FLAG_TRANSPARENT, 1);
 
-                        gce.delayTime = get16();
-                        gce.transparentColorIndex = get8();
+                        gce.delayTime = nextShort();
+                        gce.transparentColorIndex = nextByte();
 
                         expect(BLOCK_TERMINATOR);
                         break;
@@ -393,9 +384,9 @@ int main(const int argc, char** argv)
 
                         while(true)
                         {
-                            cmtBlockSize = get8();
+                            cmtBlockSize = nextByte();
 
-                            if(cmtBlockSize == 0)
+                            if(cmtBlockSize == BLOCK_TERMINATOR)
                                 break;
 
                             currPos += cmtBlockSize;
