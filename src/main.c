@@ -28,6 +28,9 @@ References:
 #include <unistd.h>
 #include <ncurses.h>
 
+// For debug
+#define START_NCURSES true
+
 // Format: position (of the rightmost bit), size
 // Big-endian positions; higher positions = higher place values
 #define FLAG_CT 7
@@ -160,8 +163,10 @@ void teardown(void)
     freeIfAllocated(gct.data);
     freeIfAllocated(lct.data);
 
+#if START_NCURSES
     if(ncursesStarted)
         endwin(); // done with ncurses, back to normal terminal
+#endif
 }
 
 void compileColorTableIfExists(uint8_t* *const colorTable)
@@ -292,6 +297,7 @@ int main(const int argc, char** argv)
     FROM THIS POINT ON, DO NOT USE STANDARD TERMINAL IO.
     */
 
+#if START_NCURSES
     // Start the screen
     initscr();
     ncursesStarted = true;
@@ -301,6 +307,11 @@ int main(const int argc, char** argv)
     {
         if(!has_colors())
         {
+            // Before we do anything with `puts` again, we need to make sure the program is fully aware that `ncurses` is no longer to be used.
+            endwin();
+            ncursesStarted = false;
+
+            // Now we can safely tell the user what happened.
             puts(msgNoColors);
             exit(EXIT_FAILURE);
         }
@@ -310,7 +321,7 @@ int main(const int argc, char** argv)
 
     noecho(); // Do not echo user input back to the screen
     clear();
-
+#endif
     ////////////////////////////////////////////////////////////////////////////
     /* Validate and parse the file
     */
